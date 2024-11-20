@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "proforma"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "rjskene", email = "rjskene83@gmail.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = []
+
+[project.urls]
+Documentation = "https://github.com/rjskene/proforma#readme"
+Issues = "https://github.com/rjskene/proforma/issues"
+Source = "https://github.com/rjskene/proforma"
+
+[tool.hatch.version]
+path = "src/proforma/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/proforma tests}"
+
+[tool.coverage.run]
+source_pkgs = ["proforma", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/proforma/__about__.py",
+]
+
+[tool.coverage.paths]
+proforma = ["src/proforma", "*/proforma/src/proforma"]
+tests = ["tests", "*/proforma/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
