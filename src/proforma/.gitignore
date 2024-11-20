@@ -1,0 +1,66 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation
+docs/_build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+.ipynb
+
+# Environment variables
+.env
+
+# mypy
+.mypy_cache/
+
+# Logs
+*.log
+
+# Data files
+*.csv
+*.xls
+*.xlsx
+*.db
+*.sqlite
+*.sqlite3
+*.json
+*.xml
+*.yaml
+*.yml
+*.parquet
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+data/
+
