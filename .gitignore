@@ -34,6 +34,7 @@ htmlcov/
 docs/_build/
 
 # Jupyter Notebook
+notebooks/
 .ipynb_checkpoints
 .ipynb
 
