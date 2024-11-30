@@ -16,11 +16,12 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
-def networkx_to_treelib_string(G):
+def networkx_to_treelib_string(G, max_depth=float('inf')):
     """
     Convert a NetworkX graph to a string representation using treelib
     """
-    def build_tree_string(node, prefix="", is_last=False, is_root=False):
+
+    def build_tree_string(node, prefix="", is_last=False, is_root=False, depth=0, max_depth=2):
         output = []
 
         # Add current node
@@ -30,13 +31,14 @@ def networkx_to_treelib_string(G):
             output.append(f"{prefix}{'└── '}{node}")
 
         # Get children (successors) of the current node
-        children = list(G.successors(node))
+        if depth < max_depth:
+            children = list(G.successors(node))
 
-        # Recursively process children
-        for i, child in enumerate(children):
-            is_last_child = (i == len(children) - 1)
-            new_prefix = prefix + "    "
-            output.extend(build_tree_string(child, new_prefix, is_last_child))
+            # Recursively process children
+            for i, child in enumerate(children):
+                is_last_child = (i == len(children) - 1)
+                new_prefix = prefix + "    "
+                output.extend(build_tree_string(child, new_prefix, is_last=is_last_child, depth=depth+1, max_depth=max_depth))
 
         return output
 
@@ -47,19 +49,20 @@ def networkx_to_treelib_string(G):
     forest = []
     for i, root in enumerate(roots):
         is_last_root = (i == len(roots) - 1)
-        forest.extend(build_tree_string(root, is_last=is_last_root, is_root=True))
+        forest.extend(build_tree_string(root, is_last=is_last_root, is_root=True,  max_depth=max_depth))
         if not is_last_root:
             forest.append("")  # Add a blank line between root trees
 
     # Return the full forest string
     return "\n".join(forest)
 
+
 BASE_ACCOUNTS = ('Assets', 'Capital')
 class Chart(nx.DiGraph):        
     """
     A Chart of Accounts is a directed graph with nodes as accounts and edges as relationships between accounts
     """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, display_depth=float('inf'), **kwargs):
         kwargs['name'] = 'Chart of Accounts'
         super().__init__(self, *args, **kwargs)
         
@@ -70,6 +73,7 @@ class Chart(nx.DiGraph):
         self.add_subs('Equity', 'Retained Earnings')
         self.add_subs('Retained Earnings', 'Income', 'Expenses')
 
+        self.display_depth = display_depth
             
     def __getattr__(self, key):
         nodes = [x for x,y in self.nodes(data=True) if y['attr_name']==key]
@@ -105,10 +109,7 @@ class Chart(nx.DiGraph):
         return name.lower()
     
     def _tree_repr_(self):
-        if len(self.nodes) > 20:
-            return 'CHART OF ACCOUNTS'
-        
-        forest_string = networkx_to_treelib_string(self)
+        forest_string = networkx_to_treelib_string(self, max_depth=self.display_depth)
 
         return 'CHART OF ACCOUNTS\n\n' + forest_string
     
@@ -173,8 +174,8 @@ class Chart(nx.DiGraph):
         return frame
 
     @classmethod
-    def from_dict_of_lists(cls, dict_of_lists):
-        chart = cls()
+    def from_dict_of_lists(cls, dict_of_lists, *args, **kwargs):
+        chart = cls(*args, **kwargs)
         graph = nx.from_dict_of_lists(dict_of_lists, create_using=nx.DiGraph)
         chart.add_nodes_from(graph.nodes(data=True))
         chart.add_edges_from(graph.edges())
@@ -227,6 +228,8 @@ def transact(entries:typing.Union[Entry, list[Entry]], must_balance:bool=True):
         else:
             warnings.warn('Entries do not sum to zero')
 
+    df.date = pd.to_datetime(df.date)
+
     return df
 
 class TransactionIDCounter:
@@ -264,12 +267,17 @@ class Ledger:
 
         self.chart = chart
         self.transactions = self._clean_transactions(transactions)
+        self.statement = Statement(self)
 
     def __repr__(self):
         return self.transactions.__repr__()
     
     def __str__(self):
         return self.transactions.__str__()
+
+    @property
+    def stat(self):
+        return self.statement
 
     def _clean_transactions(self, transactions):
         """
@@ -294,9 +302,130 @@ class Ledger:
 
         return transactions
 
-    def subledger(self, account:str):
-        subledger = self.transactions[self.transactions.account == account]
+    
+    def subledger(self, **kwargs):
+        if not kwargs:
+            raise ValueError("No filter criteria provided for subledger")
+
+        missing_keys = [key for key in kwargs if key not in self.transactions.columns]
+        if missing_keys:
+            raise ValueError(f"Keywords {missing_keys} not found in ledger")
+
+        conditions = []
+        for key, value in kwargs.items():
+            if isinstance(value, list):
+                conditions.append(self.transactions[key].isin(value))
+            elif isinstance(value, tuple) and len(value) == 2:
+                # Assuming tuple is a range
+                conditions.append((self.transactions[key] >= value[0]) & (self.transactions[key] <= value[1]))
+            else:
+                conditions.append(self.transactions[key] == value)
+
+        subledger = self.transactions[np.logical_and.reduce(conditions)]
+        
         return Ledger(self.chart, subledger)
     
     def find_transaction(self, trans_id:str):
         return self.transactions[self.transactions.trans_id == trans_id]
+
+def find_coordinates_multi_array(df, values, return_cols=False):
+    """
+    Find the coordinates of values in a multi-dimensional array
+    """ 
+    # Convert DataFrame to numpy array for faster operations
+    df_array = df.values
+
+    # Create a boolean mask where any of the values match
+    value_mask = np.isin(df_array, values)
+
+    # Create a boolean mask where the right adjacent cell is '---' or it's the last column
+    right_condition = np.column_stack((df_array[:, 1:] == '---', np.ones(df_array.shape[0], dtype=bool)))
+
+    # Combine the conditions
+    combined_mask = value_mask & right_condition
+
+    # Get the coordinates where the combined condition is True
+    coordinates = np.argwhere(combined_mask)
+
+    # Get the values at these coordinates
+    found_values = df_array[coordinates[:, 0], coordinates[:, 1]]
+
+    # Create an array of row indices for each value
+    def slicer(coords):
+        return coords if return_cols else coords[:, 0]
+    value_rows = [slicer(coordinates[found_values == value]) for value in values]
+
+    # Check for empty arrays and arrays with more than one item
+    lengths = np.array([len(rows) for rows in value_rows])
+    empty_mask = lengths == 0
+    multiple_mask = lengths > 1
+
+    # Prepare error messages
+    error_messages = []
+    if np.any(empty_mask):
+        empty_values = np.array(values)[empty_mask]
+        error_messages.extend(f"Error: Empty list for key '{value}'" for value in empty_values)
+
+    if np.any(multiple_mask):
+        multiple_values = np.array(values)[multiple_mask]
+        multiple_rows = np.array(value_rows)[multiple_mask]
+        error_messages.extend(f"Error: More than one item for key '{value}': {rows.tolist()}"
+                              for value, rows in zip(multiple_values, multiple_rows))
+
+    # If there are any error messages, raise an exception
+    if error_messages:
+        raise ValueError("\n".join(error_messages))
+
+    # If no errors, convert the results to a dictionary
+    results = {
+        value: rows.tolist()[0] if len(rows) > 0 else None for value, rows in zip(values, value_rows)}
+
+    return results
+
+def make_multi_level_index_from_chart(chart_index, flat_index):
+    assert not any(chart_index.value_counts() > 1)
+    coordinates = find_coordinates_multi_array(chart_index, flat_index)
+    return pd.MultiIndex.from_frame(chart_index.loc[list(coordinates.values())])
+
+def shape_metric(name, func, stat):
+    metric = func(stat).to_frame().rename(columns={0: name}).T
+    if isinstance(stat.index, pd.MultiIndex):
+        metric.index = pd.MultiIndex.from_tuples([[name] + ['---'] * (len(stat.index.names) - 1)])
+    else:
+        metric.index = [name]
+    
+    return metric
+
+def append_metrics(metric_funcs, stat):
+    metrics = [shape_metric(name, func, stat) for name, func in metric_funcs.items()]
+    return pd.concat([stat] + metrics)
+
+class Statement:
+    def __init__(self, ledger:Ledger):
+        self.ledger = ledger
+
+    def root(self, index:typing.Union[typing.List[str], str]='account', freq:str=None, flat=True):
+        stat = pd.pivot_table(self.ledger.transactions, values='amount', index=index, columns='date', aggfunc='sum', observed=False)
+        stat = stat.fillna(0)
+
+        stat.index = make_multi_level_index_from_chart(self.ledger.chart.as_frame(), stat.index)
+        stat = stat.sort_index()
+
+        if flat:
+            groupbys = []
+            for index_col in range(len(stat.index.names)):
+                groupby = stat.groupby(level=index_col).sum()
+                groupbys.append(groupby)
+            stat = pd.concat(groupbys)
+
+        if freq:
+            stat = stat.T.resample(freq).sum().T
+
+        return stat
+    
+    def from_template(self, template:list[str], metrics:dict={}, *args, **kwargs):
+        stat = self.root(*args, **kwargs)
+        stat = append_metrics(metrics, stat)
+        stat = stat.fillna(0)
+    
+        return stat.loc[template]
