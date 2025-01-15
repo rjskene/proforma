@@ -7,7 +7,8 @@ from .proforma import (
     Entry,
     Ledger,
     transact,
-    BASE_ACCOUNTS
+    BASE_ACCOUNTS,
+    loc_by_account
 )
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     'Entry',
     'Ledger',
     'transact',
-    'BASE_ACCOUNTS'
+    'BASE_ACCOUNTS',
+    'loc_by_account'
 ]

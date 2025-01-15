@@ -56,18 +56,17 @@ def networkx_to_treelib_string(G, max_depth=float('inf')):
     # Return the full forest string
     return "\n".join(forest)
 
-
 BASE_ACCOUNTS = ('Assets', 'Capital')
 class Chart(nx.DiGraph):        
     """
     A Chart of Accounts is a directed graph with nodes as accounts and edges as relationships between accounts
     """
-    def __init__(self, *args, display_depth=float('inf'), **kwargs):
+    def __init__(self, *args, display_depth=2, **kwargs):
         kwargs['name'] = 'Chart of Accounts'
         super().__init__(self, *args, **kwargs)
         
         for account_name in self.BASE_ACCOUNTS:
-            self.add_node(account_name, attr_name=account_name.lower())
+            self.add_node(account_name, node_name=account_name.lower())
 
         self.add_subs('Capital', 'Liabilities', 'Equity')
         self.add_subs('Equity', 'Retained Earnings')
@@ -76,7 +75,7 @@ class Chart(nx.DiGraph):
         self.display_depth = display_depth
             
     def __getattr__(self, key):
-        nodes = [x for x,y in self.nodes(data=True) if y['attr_name']==key]
+        nodes = [x for x,y in self.nodes(data=True) if y['node_name']==key]
         if len(nodes) == 1:
             return nodes[0]
         else:
@@ -97,10 +96,10 @@ class Chart(nx.DiGraph):
     def accounts(self):
         return self.nodes
 
-    def sub_accounts(self, parent):
-        return self.successors(parent)
+    def sub_accounts(self, *args, **kwargs):
+        return nx.dfs_successors(self, *args, **kwargs)
     
-    def _make_attr_name(self, name):
+    def _make_node_name(self, name):
         if not isinstance(name, str):
             raise ValueError('Sub-account names should be str')
             
@@ -121,8 +120,8 @@ class Chart(nx.DiGraph):
         if sub in self.nodes():
             raise ValueError(f'Node "{sub}" already exists in the chart')
 
-        if 'attr_name' not in kwargs:
-            kwargs['attr_name'] = self._make_attr_name(sub) 
+        if 'node_name' not in kwargs:
+            kwargs['node_name'] = self._make_node_name(sub) 
 
         self.add_node(sub, **kwargs)
         self.add_edge(parent, sub)
@@ -135,12 +134,25 @@ class Chart(nx.DiGraph):
         if existing_nodes:
             raise ValueError(f'Nodes {existing_nodes} already exist in the chart')
 
-        subs_with_attrs = ((sub, {'attr_name': self._make_attr_name(sub)}) for sub in subs)
+        subs_with_attrs = ((sub, {'node_name': self._make_node_name(sub)}) for sub in subs)
         edges = ((parent, sub) for sub in subs)
-        
+
         self.add_nodes_from(subs_with_attrs)
         self.add_edges_from(edges)
-        
+    
+    def change_parent(self, account:str, old_parent:str, new_parent:str):
+        self.remove_edge(old_parent, account)
+        self.add_edge(new_parent, account)
+        return self
+
+    def insert_between(self, old_parent:str, new_parent:str, subs:list[str]):
+        self.add_node(new_parent)
+        self.add_edge(old_parent, new_parent)
+        self.add_edges_from([(n1, n2) for n1, n2 in it.product([new_parent], subs)])
+        self.remove_edges_from([(n1, n2) for n1, n2 in it.product([old_parent], subs)])
+
+        return self
+    
     # Operators
     def find_terminal_subs(self):
         return [node for node in self.nodes() if self.in_degree(node) >= 1 and self.out_degree(node) == 0]
@@ -181,8 +193,8 @@ class Chart(nx.DiGraph):
         chart.add_edges_from(graph.edges())
 
         for node in chart.nodes:
-            if 'attr_name' not in chart.nodes[node]:
-                chart.nodes[node]['attr_name'] = chart._make_attr_name(node)
+            if 'node_name' not in chart.nodes[node]:
+                chart.nodes[node]['node_name'] = chart._make_node_name(node)
         
         # if chart.find_accounts() != chart.BASE_ACCOUNTS:
         #     diff_base = set(list(chart.BASE_ACCOUNTS)) - set(chart.find_accounts())
@@ -197,8 +209,9 @@ class Entry(dict):
 
         super().__init__(account=account, date=date, amount=amount, trans_id=trans_id, **kwargs)
 
-        for key, value in kwargs.items():
-            self[key] = value
+    def __neg__(self):
+        self['amount'] *= -1
+        return self
 
     def _format_date(self, date):
         if isinstance(date, pd.Timestamp):
@@ -299,21 +312,26 @@ class Ledger:
 
         transactions.account = pd.Categorical(transactions.account, categories=categories, ordered=True)
         transactions = transactions.sort_values(['account', 'date', 'trans_id'])
+        transactions = transactions.reset_index(drop=True)
 
         return transactions
 
-    
-    def subledger(self, **kwargs):
-        if not kwargs:
+    def subledger(self, account:str=None, all_subs:bool=False, **kwargs):
+        if account:
+            kwargs['account'] = account
+        elif not kwargs:
             raise ValueError("No filter criteria provided for subledger")
 
         missing_keys = [key for key in kwargs if key not in self.transactions.columns]
         if missing_keys:
             raise ValueError(f"Keywords {missing_keys} not found in ledger")
 
+        if all_subs:
+            kwargs['account'] = list(nx.descendants(self.chart, kwargs['account'])) + [kwargs['account']]
+
         conditions = []
         for key, value in kwargs.items():
-            if isinstance(value, list):
+            if isinstance(value, (list, set, tuple)):
                 conditions.append(self.transactions[key].isin(value))
             elif isinstance(value, tuple) and len(value) == 2:
                 # Assuming tuple is a range
@@ -328,7 +346,7 @@ class Ledger:
     def find_transaction(self, trans_id:str):
         return self.transactions[self.transactions.trans_id == trans_id]
 
-def find_coordinates_multi_array(df, values, return_cols=False):
+def find_coordinates_multi_array(df, values):
     """
     Find the coordinates of values in a multi-dimensional array
     """ 
@@ -350,42 +368,52 @@ def find_coordinates_multi_array(df, values, return_cols=False):
     # Get the values at these coordinates
     found_values = df_array[coordinates[:, 0], coordinates[:, 1]]
 
-    # Create an array of row indices for each value
-    def slicer(coords):
-        return coords if return_cols else coords[:, 0]
-    value_rows = [slicer(coordinates[found_values == value]) for value in values]
+    value_rows = [coordinates[found_values == value][0,0] for value in values]
 
     # Check for empty arrays and arrays with more than one item
-    lengths = np.array([len(rows) for rows in value_rows])
-    empty_mask = lengths == 0
-    multiple_mask = lengths > 1
+    # lengths = np.array([len(rows) for rows in value_rows])
+    # empty_mask = lengths == 0
+    # multiple_mask = lengths > 1
 
     # Prepare error messages
-    error_messages = []
-    if np.any(empty_mask):
-        empty_values = np.array(values)[empty_mask]
-        error_messages.extend(f"Error: Empty list for key '{value}'" for value in empty_values)
+    # error_messages = []
+    # if np.any(empty_mask):
+    #     empty_values = np.array(values)[empty_mask]
+    #     error_messages.extend(f"Error: Empty list for key '{value}'" for value in empty_values)
 
-    if np.any(multiple_mask):
-        multiple_values = np.array(values)[multiple_mask]
-        multiple_rows = np.array(value_rows)[multiple_mask]
-        error_messages.extend(f"Error: More than one item for key '{value}': {rows.tolist()}"
-                              for value, rows in zip(multiple_values, multiple_rows))
+    # if np.any(multiple_mask):
+    #     multiple_values = np.array(values)[multiple_mask]
+    #     multiple_rows = np.array(value_rows)[multiple_mask]
+    #     error_messages.extend(f"Error: More than one item for key '{value}': {rows.tolist()}"
+    #                           for value, rows in zip(multiple_values, multiple_rows))
 
-    # If there are any error messages, raise an exception
-    if error_messages:
-        raise ValueError("\n".join(error_messages))
+    # # If there are any error messages, raise an exception
+    # if error_messages:
+    #     raise ValueError("\n".join(error_messages))
 
-    # If no errors, convert the results to a dictionary
-    results = {
-        value: rows.tolist()[0] if len(rows) > 0 else None for value, rows in zip(values, value_rows)}
+    return value_rows
 
-    return results
-
-def make_multi_level_index_from_chart(chart_index, flat_index):
+def make_multi_level_index_from_chart(chart_index, stat_index:typing.Union[pd.Index, pd.MultiIndex]):
     assert not any(chart_index.value_counts() > 1)
-    coordinates = find_coordinates_multi_array(chart_index, flat_index)
-    return pd.MultiIndex.from_frame(chart_index.loc[list(coordinates.values())])
+    
+
+    if stat_index.nlevels > 1:
+        values = stat_index.get_level_values('account')
+    else:
+        values = stat_index
+
+    row_idxs = find_coordinates_multi_array(chart_index, values)
+
+    if stat_index.nlevels > 1:
+        idx_frame = pd.concat([
+            chart_index.loc[row_idxs].reset_index(drop=True),
+            stat_index.to_frame().reset_index(drop=True).drop('account', axis=1)
+        ], axis=1
+        )
+    else:
+        idx_frame = chart_index.loc[row_idxs]
+
+    return pd.MultiIndex.from_frame(idx_frame)
 
 def shape_metric(name, func, stat):
     metric = func(stat).to_frame().rename(columns={0: name}).T
@@ -400,12 +428,35 @@ def append_metrics(metric_funcs, stat):
     metrics = [shape_metric(name, func, stat) for name, func in metric_funcs.items()]
     return pd.concat([stat] + metrics)
 
+def loc_by_account(stat, account, drop_levels:bool=True):
+    cells = np.argwhere(stat.index.to_frame().reset_index(drop=True).values == account)
+    rows = cells[:, 0]
+    col_candidates = np.unique(cells[:, 1])
+    assert col_candidates.size == 1
+    col = col_candidates[0]
+
+    stat = stat.iloc[rows]
+    if drop_levels:
+        stat = stat.droplevel(stat.index.names[:col+1])
+
+    return stat
+
 class Statement:
     def __init__(self, ledger:Ledger):
         self.ledger = ledger
 
-    def root(self, index:typing.Union[typing.List[str], str]='account', freq:str=None, flat=True):
-        stat = pd.pivot_table(self.ledger.transactions, values='amount', index=index, columns='date', aggfunc='sum', observed=False)
+    def root(self, index:typing.Union[typing.List[str], str]='account', freq:str=None, flat:bool=True, observed:bool=False):
+        if isinstance(index, list) and len(index) > 1 and flat:
+            warnings.warn('You should NOT provide multiple indexes when flat=True')
+
+        # When observed=True, any NaNs values in the index columns will eliminate the row from the pivot table, so we need to fill NaNs with '---'
+        traxns = self.ledger.transactions.copy()
+        if observed and isinstance(index, list):
+            for idx in index:
+                if idx != 'account':
+                    traxns.loc[:, idx] = traxns.loc[:, idx].fillna('---')
+
+        stat = pd.pivot_table(traxns, values='amount', index=index, columns='date', aggfunc='sum', observed=observed)
         stat = stat.fillna(0)
 
         stat.index = make_multi_level_index_from_chart(self.ledger.chart.as_frame(), stat.index)
@@ -423,9 +474,22 @@ class Statement:
 
         return stat
     
-    def from_template(self, template:list[str], metrics:dict={}, *args, **kwargs):
+    def from_template(self, 
+        template:list[str], 
+        metrics:dict={}, 
+        ratios:dict={}, 
+        flip_sign:typing.Union[bool, list[str]]=False, 
+        *args, **kwargs
+    ):
         stat = self.root(*args, **kwargs)
+
+        if flip_sign:
+            if isinstance(flip_sign, bool):
+                stat *= -1
+            else:
+                stat.loc[flip_sign] *= -1
+
         stat = append_metrics(metrics, stat)
-        stat = stat.fillna(0)
-    
+        stat = append_metrics(ratios, stat)
+
         return stat.loc[template]
