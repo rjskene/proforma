@@ -5,6 +5,12 @@ __pycache__/
 
 # C extensions
 *.so
+*.dll
+*.dylib
+*.so.*
+*.dylib.*
+*.so.*.*
+*.dylib.*.*
 
 # Distribution / packaging
 dist/
@@ -64,4 +70,9 @@ notebooks/
 *.pkl
 *.pickle
 data/
-
+*.zip
+*.tar
+*.gz
+*.bz2
+*.rar
+*.7z

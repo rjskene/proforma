@@ -441,6 +441,35 @@ def loc_by_account(stat, account, drop_levels:bool=True):
 
     return stat
 
+def flatten_index(stat, index:typing.Union[typing.List[str], str]):
+    """
+    Flatten the index of a DataFrame by summing over the specified index levels.
+
+    This is useful for converting a multi-level index into a single level index, or for summing over a subset of the index levels.
+
+    Args:
+        stat: pd.DataFrame - The DataFrame to flatten
+        index: typing.Union[typing.List[str], str] - The index levels to flatten
+
+    Returns:
+        pd.DataFrame - The flattened DataFrame
+    """
+    index_length = len(index) if isinstance(index, list) else 1
+    n_levels_to_preserve = index_length - 1
+    index_names_to_flatten = stat.index.names[:-n_levels_to_preserve] if index_length > 1 else stat.index.names
+    index_names_to_preserve = index[1:] if index_length > 1 else []
+
+    groupbys = []
+    for index_col in range(len(index_names_to_flatten)):
+        groupby_levels = [index_col] + index_names_to_preserve
+        groupby = stat.groupby(level=groupby_levels).sum()
+        groupbys.append(groupby)
+
+    stat = pd.concat(groupbys)
+    stat.index.names = ['account'] + index_names_to_preserve
+    
+    return stat
+
 class Statement:
     def __init__(self, ledger:Ledger):
         self.ledger = ledger
@@ -463,11 +492,7 @@ class Statement:
         stat = stat.sort_index()
 
         if flat:
-            groupbys = []
-            for index_col in range(len(stat.index.names)):
-                groupby = stat.groupby(level=index_col).sum()
-                groupbys.append(groupby)
-            stat = pd.concat(groupbys)
+            stat = flatten_index(stat, index)
 
         if freq:
             stat = stat.T.resample(freq).sum().T
