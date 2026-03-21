@@ -10,6 +10,7 @@ from .proforma import (
     BASE_ACCOUNTS,
     loc_by_account
 )
+from .stargazers import who_starred
 
 __all__ = [
     'Chart',
@@ -17,5 +18,6 @@ __all__ = [
     'Ledger',
     'transact',
     'BASE_ACCOUNTS',
-    'loc_by_account'
+    'loc_by_account',
+    'who_starred',
 ]
